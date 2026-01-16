@@ -1,0 +1,602 @@
+---
+title: "Sentiment Analysis of IMDB Movie Reviews"
+author: "Dylan Smith"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+
+
+
+# Introduction 
+Introduction
+Sentiment analysis has become increasingly important due to the growth in user-generated content and feedback on digital platforms (Pang & Lee, 2008). Examples include social media, online reviews, and e-commerce sites, meaning that organisations now have access to vast amounts of public opinion data. This information provides insight into customer satisfaction and potential future consumer behaviour, allowing marketing strategies and business decisions to be more informed. However, the only efficient and cost-effective way to perform this task is through machine learning techniques, as manual analysis would be inconsistent, time-consuming, and inefficient at scale. This motivates the need to investigate predictive modelling approaches for automated sentiment classification.
+Although we have more data than ever before, transferring this data into a clear positive or negative opinion based on the textual content present remains a challenging task due to how complex language can be, and the interpretation can be subjective. This can be particularly relevant in movie reviews due to sarcasm, informal wording, and varying levels of writing style and ability, which may skew sentiment polarity. Therefore, this study aims to investigate whether sentiment polarity in movie reviews can be predicted accurately using supervised machine learning techniques due to the IMDB dataset having sentiment labels. The focus will be on optimising model performance and evaluating how effectively the model generalises to new unseen data. Overfitting and underfitting will be examined throughout to ensure the model can be reused reliably for other sentiment analysis.
+To address this aim, the following research questions are investigated:
+1.	To what extent can supervised learning accurately classify positive and negative sentiment in IMDB movie reviews?
+2.	How do different machine learning models compare in terms of accuracy, precision, recall, and F1-score when classifying sentiment?
+3.	To what extent does hyperparameter tuning improve predictive performance and reduce overfitting in sentiment classification models?
+This study uses the IMDB Large Movie Review Dataset, which contains 50,000 reviews evenly balanced between negative and positive sentiment (Maas et al., 2011). This dataset was chosen over alternatives because its size is sufficient for model training, validation, and evaluation, without being excessively large or computationally demanding like the Amazon review dataset. In addition, the IMDB reviews are already pre-labelled, making them well-suited for supervised classification. The dataset has also been widely used in prior sentiment analysis research, supporting reproducibility and meaningful comparison with existing work.
+Previous studies have shown that traditional machine learning models, such as logistic regression and support vector machines, demonstrate robust performance on sentiment classification tasks when combined with TF-IDF or bag-of-words features (Pang & Lee, 2008; Maas et al., 2011). This study contributes to this field by comparing supervised models on the IMDB dataset and evaluating their performance and generalisation to unseen reviews.
+Methodology
+2.1 pre-processing
+Data pre-processing is the foundation of any machine learning experiment. It transforms raw data into structured features with a purpose that can be analysed and modelled effectively. Issues such as bias, variance and sparsity can be evaluated better with the new perspectives of the data. Text data is sensitive to noise due to each word becoming a feature, so dimensionality is affected by small issues.
+The raw IMDb reviews contained various forms of noise, such as HTML tags, incoherent casing, and punctuation, which are natural in user-generated text. Without correct cleaning, these issues would distort the tokenisation, vocabulary, and overall results. Cleaning will also help control the dimensionality of the text, since it is a key variable for text analysis and having unnecessary unique words would inflate feature space. Reducing said dimensionality would help the models focus on the meaningful patterns which are important in deciphering whether a sentiment is positive or negative and, in turn, generalise future unseen reviews. With too many meaningless features, it will cause instability in models.
+In the first stage of pre-processing, I performed several cleaning operations to standardise the text. To ensure all changes were applied correctly, I copied the dataset to review raw. HTML tags appeared in the reviews because the data was scraped directly from the IMDB website. I removed these tags to prevent inflated vocabulary and noise, so high-variance models would not be distracted by formatting artefacts. I converted all text to lowercase to avoid duplicate features, since models might otherwise treat 'The' and 'the' as different words. After testing the most popular vocabulary, I found 'br' was a top term, meaning it had not been fully removed. I then removed it manually to reduce high-frequency noise, improving TF-IDF weighting. I removed punctuation, which has negligible effect on sentiment, to cut meaningless tokens and reduce dimensionality, thus preventing overfitting. Lastly, I removed extra whitespace created during previous cleaning steps. These actions make IF-IDF results more reliable and less affected by formatting noise.
+Next, I measured the number of words in each review to see if sentiment differed between. There was an insignificant difference in mean and median, which suggests that this is not a meaningful feature and shows there is no length-based bias between them. It is important to make sure this was not a factor since the model would have learnt “long = positive or negative” instead of true sentiment cues.
+I then tokenised the dataset into individual words and removed stop words due to them being meaningless noise, carrying no sentiment value, and only increasing dimensionality. I noticed some words like “don” once “don’t” and “vet” once “I’ve,” I kept them in since I did not want to underfit and remove useful sentiment cues. I visually checked, and the vocabulary was reflecting meaningful terms.
+Next, to check sparsity, I examined vocabulary size. There were ~100k distinct words. I initially thought this was exceedingly high. After further analysis, I found 37% of those words were unique. The vocabulary size was normal for user-generated text. These rare words increase sparsity and dimensionality. Luckily, TF-IDF down weights rare words, so they will not heavily affect the model later. This reduces variance and stabilises the model during training.
+I thought about phrases such as “very good” and came to bigrams, which may be a stronger feature than individual words. I extracted consecutive word pairs from each review. I separated them into two individual words, then stripped them of stop words again, then recombined and separated the most popular in each sentiment. Bigrams not only give an informative analysis of the patterns of phrases but also stops models from oversimplifying text and improves generalisation by learning meaningful phrasing. 
+I wanted to get a sense of how the text was structured, so I looked at Zipf’s law of a few words appearing frequently while a considerable number appear sparsely. I plotted the text, and it indeed followed the law. This reinforced the advantageous use of TF-IDF due to the overused and barely used words. This also highlights why a simple Bag-of-Words model would struggle, as it would be heavily affected by this imbalance and show high variance. 
+
+# Methodology 
+
+# 2.1 Data Pre-processing
+```{r data-preprocessing}
+library(tidyverse) #toolkit
+library(textclean) #text cleaning
+library(tidytext) # tokenisation
+
+
+# Import dataset to imdb
+imdb <- read_csv("IMDB Dataset.csv")
+
+# Seeing structure on dataset
+glimpse(imdb)
+
+```
+
+# CLEANING
+
+```{r clean-text}
+imdb <- imdb %>%
+  mutate( 
+    review_raw= review, #keep a save of original text for comparison 
+    review = replace_html(review) , #remove html tags 
+    review = str_to_lower(review),
+#put to lowercase so all standarised 
+    review = str_replace_all( review, "\\bbr\\b", " "), #came back and removed "br" cus it showed in the top words 
+    review = str_replace_all(review, "[^a-z\\s]"," "),
+#remove characters thats not letters like  , . ? !
+    review = str_squish(review)
+  )
+
+imdb %>%
+  select( review_raw, review,sentiment) %>%
+  head() # verifying new review with all changes comapared to raw.
+
+```
+
+# LENGTHS 
+
+```{r review-length}
+
+#word could for each review
+imdb <-imdb %>%
+  mutate(review_length = str_count(review, "\\S+"))
+#preview the reviews lengths alongside the sentiment 
+imdb %>%
+  select(review,sentiment, review_length)  %>%
+  head()
+```
+
+```{r review-length-summary}
+imdb %>% #comapring review length mean between the two sentiments
+  group_by( sentiment) %>%
+  summarise(
+    
+    mean_length= mean(review_length),
+    median_length = median(review_length) ,
+    sd_length = sd(review_length)
+  )#found the mean length is only 3 words difference meaning lnegth isnt a meaningful feature
+```
+
+# TOKENISING 
+
+```{r tokenise}
+# Tokenise so i can just reuse instead of doing everytime 
+tokens <- imdb %>%
+  unnest_tokens(word, review) 
+
+tokens_clean <- tokens %>%
+  anti_join(stop_words, by = "word")
+
+```
+
+# COMMON WORDS
+
+```{r common-words}
+
+tokens_clean  %>%
+  #remove the useful stop words using anyi_join since carry no sentiment
+  
+# then count the remianing relevant w ords
+  count(word,  sort = TRUE) %>%
+  head(20)
+```
+
+```{r common-words-by-sentiment}
+tokens_clean %>%
+#now sorting by sentiment 
+  
+  count(sentiment , word , sort = TRUE) %>%
+  group_by(sentiment) %>%
+  slice_max(n, n = 15) #top 15 for each sentiment
+
+
+
+library(ggplot2)
+
+tokens %>%
+  count(word, sort = TRUE) %>%
+  slice_head(n = 20) %>%
+  ggplot(aes(x = reorder(word, n), y = n)) +
+  geom_col() +
+  coord_flip() +
+  labs(title = "Top 20 Most Frequent Words Before Stopword Removal",
+       x = "Word",
+       y = "Frequency")
+
+# Top 20 most frequent words AFTER removing stopwords
+tokens_clean %>%
+  count(word, sort = TRUE) %>%
+  slice_head(n = 20) %>%
+  ggplot(aes(x = reorder(word, n), y = n)) +
+  geom_col() +
+  coord_flip() +
+  labs(title = "Top 20 Most Frequent Words After Stopword Removal",
+       x = "Word",
+       y = "Frequency")
+
+```
+#brain storming thinking how sometimes terms like "not good" and stuff could misrepresent the data
+
+
+
+# BIGRAMS
+
+```{r bigrams}
+# creating the two word bigrams and using imdb instead of tokens since need 2 words not single words  
+tokens_bigram <- imdb %>%
+  unnest_tokens(bigram, review, token = "ngrams", n = 2) # makes a new column called bigram, with input column is review then the token n-grams is bigrams since i put n=2. 
+
+tokens_bigram %>%
+  count(bigram, sort = TRUE) %>%
+  head(20)
+```
+# not really helpful stuff, i can instead combine bigram and sentiment. due to presence of stopwords making this useless.
+```{r bigrams-clean}
+library(tidyr)
+
+# seperating bigrams into two words 
+bigrams_separated<- tokens_bigram %>%
+  separate(bigram, into=c("word1", "word2"), sep= " ") 
+# now making sure neither word is a stopword 
+bigrams_filtered <- bigrams_separated %>%
+  filter(!word1 %in% stop_words$word,
+         !word2 %in% stop_words$word)
+
+#isnt clear which is for positive and nagetive. sentiment
+```
+```{r bigrams-by-sentiment }
+bigrams_filtered %>%
+  unite( bigram, word1,word2, sep = " ")%>% # recombine making sure no stopwords
+  count(sentiment, bigram, sort = TRUE) %>% # cont bigram frequency within each sentiment 
+  group_by(sentiment) %>%
+  slice_max(n, n=15)
+```
+
+# VOCABULARY 
+
+```{r vocab-size}
+tokens %>% 
+  distinct(word) %>% 
+  count(name = "vocab_size")
+#counting each distinct word 
+```
+
+#so the vocab size is ~ 100k which is 2x the amount of reviews. at first i didnt believe this how can there be so many unique words for a similar purpose like movie reviews.
+
+
+```{r unique-words-count}
+tokens %>%
+  count(word) %>% #counting words which appear
+  filter(n == 1) %>% #exactly one time
+  count(name = "unique_word_count")
+
+```
+#this clarifies that ~37% are unique words. 
+
+```{r zipf}
+#zipf law is the frequency of a small amount of words are used extremely frquency while more rare less frequent 
+
+freq <- tokens %>% # makes a pipeline from single word token dataframe
+  count(word, sort = TRUE) %>% # counts each unique word appears
+  mutate(rank = row_number()) #ranks each word as ##1 most frequenct word andd then 100k least 
+
+ggplot(freq, aes(rank, n)) + #creates a scatter plot 
+  geom_line() + # draws a line to each point 
+  scale_x_log10() + # put the x axis and y axis scale to log10() 
+  scale_y_log10() +
+  labs(title = "Zipfs Law for IMDB Reviews",
+       x = "Rank (flog scale)",
+       y = "Frequency (log scale)")
+```
+
+2.2 Feauture Engineering 
+
+``` {r feature-setup}
+#preparing for feature engineering and modeling
+
+imdb <- imdb %>%
+  mutate(
+    rev_id = row_number(),        # each review has unqiue id now
+    sentiment = factor(sentiment) # sentiment needs to be factor for future modelling
+  )
+
+# check if applied
+imdb %>%
+  select(rev_id , sentiment, review) %>%
+  head()
+#confirmed each h
+```
+
+#attach rev_id to clean token
+```{r fe-setup}
+imdb <- imdb %>%
+  mutate(
+    rev_id   = row_number(), #add unique id column
+    sentiment = factor(sentiment) #makes sentiment a column
+  )
+
+imdb %>%
+  select(rev_id, sentiment, review) %>%
+  head()
+```
+
+# re token with id attached
+```{r retoken}
+tokens <- imdb %>%
+  select(rev_id, sentiment, review) %>%
+  unnest_tokens(word, review)
+
+
+tokens_clean <- tokens %>%
+  anti_join(stop_words, by = "word")
+
+tokens_clean %>%
+  head()
+```
+# remebered to add bigrams and we redo incorperting rev_id
+```{r bigrams-revid}
+
+# 1. Create bigrams tied to each rev_id
+tokens_bigram <- imdb %>%
+  select(rev_id, review) %>%
+  unnest_tokens(bigram, review, token = "ngrams", n = 2)
+
+# 2. Split bigram into two words
+bigrams_separated <- tokens_bigram %>%
+  separate(bigram, into = c("word1", "word2"), sep = " ")
+
+# 3. Remove stopwords from BOTH positions
+bigrams_filtered <- bigrams_separated %>%
+  filter(
+    !word1 %in% stop_words$word,
+    !word2 %in% stop_words$word
+  )
+
+# 4. Recombine word1 + word2 into a single token (bigram)
+# Keep only (rev_id, word)
+bigrams_ready <- bigrams_filtered %>%
+  unite(word, word1, word2, sep = " ") %>%
+  select(rev_id, word)
+
+# Preview
+head(bigrams_ready)
+```
+```{r combinarion}
+library(dplyr)
+library(tidytext)
+library(Matrix)
+
+# 1) Combine unigrams (tokens_clean) and bigrams (bigrams_ready)
+tokens_uni <- tokens_clean %>%
+  select(rev_id, word)
+
+tokens_all <- bind_rows(
+  tokens_uni,
+  bigrams_ready
+)
+
+# 2) TF-IDF on unigrams + bigrams together
+tfidf_all <- tokens_all %>%
+  count(rev_id, word) %>%           # term frequency per review
+  bind_tf_idf(word, rev_id, n)      # add tf, idf, tf-idf
+
+# 3) Cast to sparse matrix for modelling
+dtm_all <- tfidf_all %>%
+  select(rev_id, word, tf_idf) %>%
+  cast_sparse(rev_id, word, tf_idf)
+
+dtm_all
+dim(dtm_all)
+```
+# [1]  50000 931163 is way too big so have to some dimensionality reduction so im going to make it compulsarory to make 3 changes
+
+```{r reduction}
+
+library(dplyr)
+library(Matrix)
+
+#Compute document frequency for each term
+term_df <- tfidf_all %>%
+  group_by(word) %>%
+  summarise(df = n_distinct(rev_id), .groups = "drop")
+
+# Keep only terms that appear in at least 5 reviews
+terms_keep <- term_df %>%
+  filter(df >= 5)
+
+nrow(term_df)
+nrow(terms_keep)
+
+# Filter tfidf_all to those terms only
+tfidf_trim <- tfidf_all %>%
+  semi_join(terms_keep, by = "word")
+
+#Build a smaller sparse matrix
+dtm_trim <- tfidf_trim %>%
+  select(rev_id, word, tf_idf) %>%
+  cast_sparse(rev_id, word, tf_idf)
+
+dtm_trim
+dim(dtm_trim)
+
+```
+#test train 
+
+```{r traintest}
+library(caret)
+set.seed(123)  # for reproducibility
+
+# 1. Create index for training (80% of rows)
+train_index <- createDataPartition(imdb$sentiment, p = 0.8, list = FALSE)
+
+# 2. Split the matrix
+dtm_train <- dtm_trim[train_index, ]
+dtm_test  <- dtm_trim[-train_index, ]
+
+# 3. Split the labels
+y_train <- imdb$sentiment[train_index]
+y_test  <- imdb$sentiment[-train_index]
+
+# Check sizes
+length(y_train)
+length(y_test)
+dim(dtm_train)
+dim(dtm_test)
+
+```
+2.3 predictive models 
+I have chosen to test the effectiveness of three separate models for the sentiment classification. I used the feature representation to ensure that performance was representative of modelling assumptions rather than different data in pre-processing. 
+Logistic regression – I selected as logistic regression as the main predictive model due to its performance on text classification tasks and the ease of interpretation. The model will learn from each word or bigram which holds weight in determining positive or negative review. I tried to prevent overfitting by regularising to reduce the influence of uninformative words. Also, model parameters were selected using cross-validation on the training data to make sure the model was not dependant entirely on a single data split. 
+Naïve bayes – Multinomial Naïve Bayes was attempted to be implemented due to its simplicity and common use in text classification. The model required converting the sparse TF-IDF feature representation into a dense matrix; however, the limitations of my laptop’s 8 GB of RAM meant this process exceeded available hardware memory and caused R to crash during training. Feature dimensionality was reduced to 2,000 terms to mitigate this issue, but this still did not resolve the problem. Further feature reduction was avoided, as it risked the data no longer being accurately represented due to excessive information loss. This highlighted the limitations of applying certain algorithms to large-scale sparse text data and encouraged a greater focus on linear models, as they natively support sparse representations.
+SVM – I used the SVM model because it handles high-dimensional text data efficiently. The algorithm involves identifying the boundary that separates the negative and positive reviews and uses the max boundary in them. Linear SVM’s are preform using sparse TF-IDF representations and often achieve robust performance in sentiment analysis tasks which I looked. 
+Decision Tree – I implemented a decision tree classifier to assess the difference in performance of a non-linear classification model on sentiment analysis. Decision trees work by recursively splitting the feature space into decision rules based on feature values, allowing them to capture complex, non-linear relationships in the data. I selected the model to contrast with linear classifiers and to assess whether modelling interactions between words could improve performance of classification. 
+
+ 
+
+```{r logistic regression }
+
+library(glmnet) 
+
+#glmnet needds numeric y for bionomial
+y_train_bin <- ifelse(y_train == "positive",1,0)
+
+set.seed(123)
+
+#corss validate regularised logistic regression
+cv_fit <- cv.glmnet(
+  x = dtm_train,
+  y = y_train_bin,
+  family = "binomial",
+  alpha=0.5,
+  nfolds=5,
+  type.measure = "class"
+)
+
+#predict on test
+
+prob <- predict(cv_fit, newx = dtm_test, s = "lambda.min", type = "response")
+pred <- ifelse(prob >= 0.5, "positive", "negative") %>%
+  factor(levels = levels(y_test))
+
+
+#eval
+
+confusionMatrix(pred, y_test, positive = "positive")
+```
+decent scores but i wanted to try some other features and setups
+#Attempt 2
+
+```{r keeping negation words}
+#list of negation terms that i will keep (may alter sentiment polarity)
+negators <- c("not", "no", "nor", "never", "n't")
+
+#modified stopword list and doesnt include negators so not removed during filtering
+stop_words2 <- stop_words %>%
+  filter(!word %in% negators)
+
+#tokenise each review into induviual words
+tokens <- imdb %>%
+  select(rev_id, review) %>% #keep rev_id  so we can later rebuild
+  unnest_tokens(word, review)
+
+#removed stopwords using modified list
+tokens_clean2 <- tokens %>%
+  anti_join(stop_words2, by = "word") #negators remain
+
+tokens_clean2 %>% count(word, sort = TRUE) %>% head(20) #display top 20
+
+
+```
+```{r logistic regression 2 }
+# rebuild tf-idf features using tokens_clean2
+tfidf2 <- tokens_clean2 %>%
+  count(rev_id, word) %>%
+  bind_tf_idf(word, rev_id, n)
+
+# cast to sparse matrix
+dtm2 <- tfidf2 %>%
+  select(rev_id, word, tf_idf) %>%
+  cast_sparse(rev_id, word, tf_idf)
+
+# train/test split using SAME indices as before (important for fair comparison)
+dtm_train2 <- dtm2[train_index, ]
+dtm_test2  <- dtm2[-train_index, ]
+
+y_train2 <- imdb$sentiment[train_index]
+y_test2  <- imdb$sentiment[-train_index]
+
+# logistic regression again (this becomes "logistic regression 2")
+y_train2_bin <- ifelse(y_train2 == "positive", 1, 0)
+
+cv_fit2 <- cv.glmnet(
+  x = dtm_train2,
+  y = y_train2_bin,
+  family = "binomial",
+  alpha = 0.5,
+  nfolds = 5,
+  type.measure = "class"
+)
+
+prob2 <- predict(cv_fit2, newx = dtm_test2, s = "lambda.min", type = "response")
+pred2 <- factor(ifelse(prob2 >= 0.5, "positive", "negative"), levels = levels(y_test2))
+
+confusionMatrix(pred2, y_test2, positive = "positive")
+```
+
+
+#i changed the decision threshold when tinkering i found 0.55 is best since 0.6 is too much and 0.5 too small. it improved specificity and precision when at 0.55 and balanced the best between false positive and false negative errors.
+
+
+
+```{r Regularised logistic regression }
+library(glmnet)
+library(caret)
+
+#converts sentiment labels to binary because glmnet expects 0 or 1
+y_train_bin <- ifelse(y_train2 == "positive", 1, 0)
+
+fit_and_eval <- function(a) {# defines function that trains logistic regression with specific regularisation type
+  set.seed(123) # reproducibility so cross validation fold used the same each run
+  cv <- cv.glmnet( #cross validated log regression 
+    x = dtm_train2, # regularisation strength is selected from a 5 fold cross validation 
+    y = y_train_bin,
+    family = "binomial",
+    alpha = a, #controls type of regularisation ridge,lasso,elastic
+    nfolds = 5, 
+    type.measure = "class"
+  )
+  prob <- predict(cv, newx = dtm_test2, s = "lambda.min", type = "response") #uses best lambda found
+  pred <- factor(ifelse(prob >= 0.55 , "positive", "negative"), levels = levels(y_test2)) #line tinkered to get 0.55 
+  cm <- confusionMatrix(pred, y_test2, positive = "positive") # produces the big table with all useful info
+  list(alpha = a, cm = cm, cv = cv)
+} #output
+
+res_ridge <- fit_and_eval(0) #runs 3 models with different regu;arisaion 
+res_lasso <- fit_and_eval(1)
+res_enet  <- fit_and_eval(0.5)
+
+res_ridge$cm
+res_lasso$cm
+res_enet$cm #displays
+
+
+```
+```{r decision tree }
+
+
+library(Matrix)
+library(rpart)
+library(caret)
+
+set.seed(123) 
+
+#reduc feature space to make computationally feasible.
+df <- Matrix::colSums(dtm_train2 > 0)
+top_features <- names(sort(df, decreasing = TRUE))[1:2000]
+
+#training and testing matrices also reduced to be consistent 
+dtm_tree_train <- dtm_train2[, top_features]
+dtm_tree_test  <- dtm_test2[, top_features]
+
+#attaching sentiment labels are added to feature data frames
+train_df <- as.data.frame(as.matrix(dtm_tree_train))
+test_df  <- as.data.frame(as.matrix(dtm_tree_test))
+
+train_df$sentiment <- y_train2
+test_df$sentiment  <- y_test2
+
+# train decision tree
+tree_model <- rpart(
+  sentiment ~ ., #use all features as predicitors
+  data = train_df, 
+  method = "class",
+  control = rpart.control(
+    cp = 0.01, # pruning to avoid overfitting
+    maxdepth = 20 #limits tree depth
+  )
+)
+
+# predict on test set
+pred_tree <- predict(tree_model, test_df, type = "class")
+
+confusionMatrix(pred_tree, y_test2, positive = "positive")
+
+```
+Results and Discussion-
+I have evaluated the models on variables such as accuracy, sensitivity, specificity, balanced accuracy, and Cohen’s Kappa. The given dataset was split evenly 50/50 between positive and negative ensures results do not succumb to inflated class imbalances which might skew results. I used the same training and test split to ensure the comparison was fair across the models and I intended for the focus to be on generalisation not just raw accuracy.
+Logistic Regression – I started with a regularised logistic regression model and used it as the baseline. TF-IDF features were the unigrams and bigrams I crafted earlier. I achieved ~88% accuracy with a balanced sensitivity and specificity. This shows genuine predictive capabilities. The equal sensitivity and specificity reflect the model is equally skilled at identifying positive and negative sentiment, this further suggest meaningful sentiment rather than favouring a certain class. The robust performance highlights the usability of RLR models when dealing with high-dimensional spare text data. Therefore, this model has provided a robust and interpretable baseline for this sentiment classification. 
+Logistic Regression 2 – The main difference between this trial was the addition of the negated words to see if it would alter the accuracy of model. With results remarkably similar to the first with accuracy, sensitivity and specificity remaining the same it indicates that TF-IDF model already captured most sentiment information. Another interpretation could be the value of unigrams in determining the sentiment polarity in the IMDb reviews. This indicates that explicit negation handling provides marginal benefit for this dataset. Furthermore, the stability of performance demonstrated the robustness of logistic regression model and shows an interesting insight of complexity is not tied to improved predictive modelling. These results indicate that even though negation handling was not beneficial on it own, with other engineered features may still offer incremental improvements. In high performance models, improving often come down to marginal increases having to be validated by empirical evidence through testing. 
+Regularised Logistic Regression – I attempted to ridge, lasso and elastic net to see if there was any variety in performance from different penalty structure when modelling high dimensional sparse TF-IDF text features. The results showed that Lasso and elastic net marginally outperformed the ridge in terms of accuracy and Kappa, this indicates that the features for the sentiment are distributed among many weak features than a dense number of strong predictors.  The decrease in accuracy from ridge performance suggests that allowing all features to remain active can retain too much noise in sparse text settings, whereas the other twos built in feature selection balanced between sparsity and stability are better suited to sentiment classification. I also adjusted the probability decision threshold to explore differences in results. I found increasing from 0.5-0.55-0.6 improved specificity and precision for the positive class but reduced sensitivity. This implies the classification objectives can be tuned without changing the underlying model.
+Naïve Bayes and Support Vector Machine (SVM) – I attempted these two models and explored the possibility of implementing them due to their suitability to text classification. However, R started to crash when I tried to run them due to my computational constraints exceeding my 8GB ram laptop. Naïve Bayes required conversion of the sparse TF-IDFs matrix to a dense representation. I reduced the feature space to only two thousand terms but unfortunately the issues remained. Similar, with the SVM model the same issue arose where implicit sparse-to-dense coercion occurred within implementation. These failures implementing the models shows a limitation when applying certain algorithms to large scale sparse text data. This highlights the importance of engineering and understanding why certain models like logistic regression which support sparse representations is vital when studying data and creating models. 
+Decision Tree – I ended my modelling and decided to use a decision tree. I attempted it because I wanted to use a non-linear model and observe how it handles high dimensional text data and compare with previous linear classifiers that were used before. To not repeat the issues of previous naïve bayes and SVM models I limited the feature space for the training by limiting number of features to the most repeated two thousand terms. Finally, I converted the sparse matrix to dense representation so the model could work on the data. Results wise the decision tree fell significantly short with accuracy of 70%; an 18% drop off from the linear models. Cohens Kappa also fell ins core due to the model being less capable of predicting performance and agreement beyond chance. The sensitivity for the positive class was high in comparison, but the negative was quite low meaning the model sometimes falsely predicted positive. This limitation is common in decision trees in high dimensional text data where overfitting are issues that decision trees cannot naturally handle. To summarise, decision trees are less appropriate and useful for TF-IDF based sentiment classification than the Logistic Regression models. 
+Conclusion -
+This study investigated the effectiveness of supervised machine learning models on IMDb reviews and extracting accurate predictions on the sentiment tied to each review. Through preprocessing and use of TF-IDF representations, I transformed the text into a structed form suitable for predictive modelling while controlling variables which may skew results like noise and sparsity. 
+Regularised Logistic Regression consistently showed it was the best fit model for this dataset with performance across all measured metrics being high, with accuracy at around 88% with balanced sensitivity and specificity. The model showed with the balanced sensitivity and sparsity it was well adjusted to unseen data and didn’t bias a certain review class. Further exploration resulted in the findings that ridge regression was outperformed by lasso and elastic net penalties. I interpreted this as meaning the movie reviews was distributed across many weak informative features rather than small dominant set. I adjusted the classification threshold showing the performance can be fine tuned with theory based trial and error to try increase performance.
+The attempted models such as Naïve Bayes and SVM weren’t successful due to hardware limitations due to the need of having to dense matrix representations as the input data and converting was too costly on my RAM. While in theory these models were well suited for text classification, this highlights the importance of developers being able to manage unexpected issues, in this case applying models to large scale sparse text data. Decision tree classification preformed substantially worse due to the non-linear tree based methods just not being the best fit for this high dimensional sparse text data.
+Overall, the results demonstrate that supervised learning can accurately classify sentiment in the IMDb movie review dataset. Logistic regression was strongest achieving accuracy of around 88% with balanced sensitivity and specificity. Comparing across models shows linear and regularised models preformed best with lasso and elastic net due to their noise reduction ability. Hyperparameter tuning produced small improvements in performance showing that tweaks can improve performance. Finally, the findings highlight the regularised linear models provide the most robust and efficient model that I tested. Future work would explore more models which we couldn’t work with in this study due to hardware. Id also aim to explore more advanced text representations like transformer-based models.
+
+References
+Pang, B. & Lee, L., 2008. Opinion mining and sentiment analysis. Foundations and Trends in Information Retrieval, 2(1–2), pp.1–130.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
